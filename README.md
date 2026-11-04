@@ -1,6 +1,9 @@
 # jukeboxx
 a jukebox that plays music from a yt music playlist 
 
+<img width="1919" height="994" alt="image" src="https://github.com/user-attachments/assets/7fb08135-6020-4bf1-875b-59ab255a7e9c" />
+
+
 ## Features
 
 * **Audio & Album Art Playback**: Streams audio in the background via a hidden YouTube IFrame player while dynamically extracting and displaying album artwork (`hqdefault.jpg`).
