@@ -11,7 +11,7 @@ a jukebox that plays music from a yt music playlist
 ## Getting Started
 
 1. Clone or download this repository to your local machine.
-2. Localhost `jookboxx` directly in any modern web browser.
+2. Localhost `index.html` directly in any modern web browser.
 
 ## Built With
 
