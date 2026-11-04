@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="referrer" content="strict-origin-when-cross-origin">
+        <title>jukeboxx</title>
+        <style>
+            body {
+                max-width: 600px;
+                margin: 20px auto;
+                padding: 0 15px;
+                font-family: sans-serif;
+            }
+            h2 { margin-bottom: 12px;}
+            .input-group {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            input[type="text"], input:not([type]) {
+                flex: 1;
+                padding: 8px 12px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 14px;
+            }
+            button {
+                padding: 8px 14px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: 500;
+            }
+            button:hover { background: #e0e0e0; }
+            button.secondary:hover { background: whitesmoke; }
+
+            .album-art-container{
+                width: 100%;
+                aspect-ratio: 1/1;
+                background: #111;
+                border-radius: 8px;
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin-top: 10px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            }
+
+            #albumArt{
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: none;
+            }
+
+            .album-placeholder{
+                color: #777;
+                font-size: 14px;
+            }
+            .controls {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin: 14px 0;
+                flex-wrap: wrap;
+            }
+            #nowPlaying {
+                margin: 10px 0;
+                padding: 10px;
+                font-size: 15px;
+                word-break: break-word;
+            }
+            ol#queueList {
+                padding-left: 24px;
+                margin: 10px 0 16px 0;
+            }
+            ol#queueList li {
+                padding: 6px 8px;
+                border-radius: 4px;
+                margin-bottom: 4px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            ol#queueList li.active {
+                background: #eef2ff;
+            }
+            .track-title {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                margin-right: 10px;
+            }
+            .remove-btn {
+                border: none;
+                padding: 2px 6px;
+                cursor: pointer;
+                font-size: 13px;
+                background: transparent;
+            }
+            .remove-btn:hover {
+                color: red;
+            }
+            .badge {
+                font-size: 11px;
+                padding: 2px 6px;
+                border-radius: 4px;
+                color: #1e40af;
+                background: #dbeafe;
+                margin-left: 6px;
+            }
+        </style>
+    </head>
+    <body>
+        <h2>jukeboxx</h2>
+
+        <div class="input-group">
+            <input id="vId" placeholder="video id or url" onkeydown="if(event.key==='Enter') addTrack()">
+            <button onclick="addTrack()">add song</button>
+        </div>
+        <div class="input-group">
+            <input id="pId" placeholder="playlist id or url (e.g. PL...)" onkeydown="if(event.key==='Enter') loadPlaylist()">
+            <button onclick="loadPlaylist()">load playlist</button>
+        </div>
+
+       <div style="position:absolute; left:-9999px; top:0; width:200px; height:200px;">
+    <div id="yt-player"></div>
+</div> 
+
+        <div class="album-art-container">
+            <span class="album-placeholder" id="albumPlaceholder">no track playing</span>
+            <img id="albumArt" src="" alt="Album Art">
+        </div>
+
+        <h3 id="nowPlaying">now playing: -</h3>
+
+        <div class="controls">
+            <button onclick="prevTrack()" class="secondary">prev</button>
+            <button onclick="playCurrent()">play</button>
+            <button onclick="pauseCurrent()">pause</button>
+            <button onclick="nextTrack()">skip</button>
+            <label style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+                vol: <input type="range" min="0" max="100" value="80" oninput="setPlayerVolume(this.value)">
+            </label>
+        </div>
+
+        <h4>queue</h4>
+        <ol id="queueList"></ol>
+        <button onclick="clearQueue()" class="secondary">clear queue</button>
+
+        <!-- YouTube IFrame API -->
+        <script src="https://www.youtube.com/iframe_api"></script>
+
+        <script>
+            let player;
+            let queue = [];
+            let currentIndex = -1;
+            let isPlayerReady = false;
+            
+            function onYouTubeIframeAPIReady() {
+                 console.log('API ready, creating player');
+                 const playerVars = { autoplay: 1, enablejsapi: 1, playsinline: 1 };
+                  if (window.location.protocol.startsWith('http')) {
+                      playerVars.origin = window.location.origin;
+                   }
+                   player = new YT.Player('yt-player', {
+                       height: '200',
+                       width: '200',
+                        playerVars: playerVars,
+                          events: {
+                              onReady: onPlayerReady,
+                                 onStateChange: onPlayerStateChange,
+                                 onError: onPlayerError
+        }
+    });
+}
+
+// tells you in the console if init never finishes
+setTimeout(() => {
+    if (!isPlayerReady) {
+        console.error('Player still not ready after 5s. typeof YT =', typeof YT);
+    }
+}, 5000);
+
+           let pendingPlaylist = null;
+
+function onPlayerReady(e) {
+    console.log('player ready');
+    isPlayerReady = true;
+    if (pendingPlaylist) {
+        const p = pendingPlaylist;
+        pendingPlaylist = null;
+        startPlaylist(p);
+    } else if (queue.length > 0 && currentIndex === -1) {
+        playTrack(0);
+    }
+}
+
+function loadPlaylist() {
+    const raw = document.getElementById('pId').value.trim();
+    if (!raw) return;
+    const pId = getPlaylistId(raw);
+    document.getElementById('pId').value = '';
+
+    if (!isPlayerReady) {
+        pendingPlaylist = pId;
+        document.getElementById('nowPlaying').innerText = 'waiting for player, playlist will start automatically...';
+        return;
+    }
+    startPlaylist(pId);
+}
+
+function startPlaylist(pId) {
+    document.getElementById('nowPlaying').innerText = 'loading playlist: ' + pId;
+    player.cuePlaylist({ listType: 'playlist', list: pId, index: 0 });
+
+    let attempts = 0;
+    const timer = setInterval(() => {
+        attempts++;
+        const list = player.getPlaylist();
+        if (Array.isArray(list) && list.length > 0) {
+            clearInterval(timer);
+            queue = list.map(id => ({ id: id, title: id }));
+            list.forEach((id, i) => fetchTitle(id, i));
+            playTrack(0);
+        } else if (attempts > 20) {
+            clearInterval(timer);
+            document.getElementById('nowPlaying').innerText =
+                'could not load playlist (private, empty, or invalid id?)';
+        }
+    }, 500);
+}
+
+            function onPlayerStateChange(e) {
+                if (e.data === YT.PlayerState.ENDED) {
+                    nextTrack();
+                }
+            }
+
+            function onPlayerError(e) {
+                console.warn("YouTube Player error:", e.data);
+                if (currentIndex !== -1 && currentIndex < queue.length) {
+                    document.getElementById('nowPlaying').innerText = 'Error playing video (' + queue[currentIndex].id + '). Skipping...';
+                }
+                setTimeout(nextTrack, 1500);
+            }
+
+            function getId(input) {
+                if (!input) return '';
+                input = input.trim();
+                if (input.length === 11 && !input.includes('/') && !input.includes('?') && !input.includes('&')) {
+                    return input;
+                }
+                try {
+                    const url = new URL(input.startsWith('https') || input.startsWith('http') ? input : 'https://' + input);
+                    if (url.hostname.includes('youtu.be')) {
+                        return url.pathname.slice(1).split(/[?#&]/)[0];
+                    }
+                    if (url.pathname.includes('/shorts')) {
+                        return url.pathname.split('/shorts/')[1].split(/[?#&]/)[0];
+                    }
+                    if (url.pathname.includes('/live/')) {
+                        return url.pathname.split('/live/')[1].split(/[?#&]/)[0];
+                    }
+                    if (url.pathname.includes('/embed/')) {
+                        return url.pathname.split('/embed/')[1].split(/[?#&]/)[0];
+                    }
+                    const v = url.searchParams.get('v');
+                    if (v) return v;
+                } catch (err) {}
+                
+                const m = input.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/);
+                return (m && m[1]) ? m[1] : input.trim();
+            }
+
+            function getPlaylistId(input) {
+                if (!input) return '';
+                input = input.trim();
+                // If it's a full URL containing list=
+                const m = input.match(/[?&]list=([^&#]+)/);
+                if (m) return m[1];
+                // Otherwise assume the raw text input is already the playlist ID (e.g. PLKcMT7HgbbY...)
+                return input;
+            }
+
+            function updateAlbumArt(videoId) {
+                const img = document.getElementById('albumArt');
+                const placeholder = document.getElementById('albumPlaceholder');
+                if (videoId) {
+                    img.src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+                    img.style.display = 'block';
+                    placeholder.style.display = 'none';
+                } else {
+                    img.src = '';
+                    img.style.display = 'none';
+                    placeholder.style.display = 'block';
+                }
+            }
+
+            function addTrack() {
+                const input = document.getElementById('vId');
+                const val = input.value.trim();
+                if (!val) return;
+                const id = getId(val);
+                if (!id) return;
+
+                const track = {id: id, title: id};
+                const newTrackIndex = queue.length;
+                queue.push(track);
+                input.value = '';
+                render();
+
+                fetchTitle(id, newTrackIndex);
+
+                let state = -1;
+                if (isPlayerReady && player && typeof player.getPlayerState === 'function') {
+                    state = player.getPlayerState();
+                }
+
+                if (currentIndex === -1) {
+                    if (isPlayerReady) {
+                        playTrack(0);
+                    }
+                } else if (state === YT.PlayerState.ENDED || currentIndex >= queue.length) {
+                    playTrack(newTrackIndex);
+                }
+            }
+
+            function fetchTitle(id, index) {
+                fetch('https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=' + id + '&format=json')
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && data.title && queue[index] && queue[index].id === id) {
+                            queue[index].title = data.title;
+                            if (currentIndex === index) {
+                                document.getElementById('nowPlaying').innerText = 'now playing: ' + data.title;
+                            }
+                            render();
+                        }
+                    })
+                    .catch(() => {});
+            }
+
+ function loadPlaylist() {
+                const raw = document.getElementById('pId').value.trim();
+                if (!raw) return;
+                const pId = getPlaylistId(raw);
+                if (!pId) return;
+
+                document.getElementById('nowPlaying').innerText = 'loading playlist: ' + pId;
+                document.getElementById('pId').value = '';
+
+                if (player && isPlayerReady && typeof player.loadPlaylist === 'function') {
+                    // Load playlist directly into the YouTube player
+                    player.loadPlaylist({listType: 'playlist', list: pId, index: 0});
+
+                    // Check if the player successfully loaded items after a short delay
+                    let attempts = 0;
+                    const checkInterval = setInterval(() => {
+                        attempts++;
+                        if (typeof player.getPlaylist === 'function') {
+                            const list = player.getPlaylist();
+                            if (Array.isArray(list) && list.length > 0) {
+                                clearInterval(checkInterval);
+                                queue = list.map(id => ({id: id, title: id}));
+                                currentIndex = 0;
+                                playTrack(0);
+                                list.forEach((id, i) => fetchTitle(id, i));
+                                return;
+                            }
+                        }
+                        if (attempts > 6) {
+                            clearInterval(checkInterval);
+                            // Fallback: If getPlaylist is blocked by browser security, use the playlist ID itself as a fallback track
+                            queue = [{ id: pId, title: 'YouTube Playlist (' + pId + ')' }];
+                            currentIndex = 0;
+                            document.getElementById('nowPlaying').innerText = 'playing playlist mode: ' + pId;
+                            render();
+                        }
+                    }, 500);
+                } else {
+                    document.getElementById('nowPlaying').innerText = 'Player not ready yet. Try again in a second.';
+                }
+            }
+
+            function playTrack(idx) {
+                if (idx < 0 || idx >= queue.length) return;
+                currentIndex = idx;
+                const track = queue[currentIndex];
+                document.getElementById('nowPlaying').innerText = 'now playing: ' + (track.title || track.id);
+                updateAlbumArt(track.id);
+                render();
+
+                if (isPlayerReady && player) {
+                    // If it's a playlist item vs regular video ID
+                    if (track.id.startsWith('PL')) {
+                        if (typeof player.loadPlaylist === 'function') {
+                            player.loadPlaylist({listType: 'playlist', list: track.id, index: 0});
+                        }
+                    } else {
+                        if (typeof player.loadVideoById === 'function') {
+                            player.loadVideoById(track.id);
+                        }
+                    }
+                }
+            }
+
+            function playCurrent() {
+                if (currentIndex === -1 && queue.length > 0) {
+                    playTrack(0);
+                } else if (player && typeof player.playVideo === 'function') {
+                    player.playVideo();
+                }
+            }
+
+            function pauseCurrent() {
+                if (player && typeof player.pauseVideo === 'function') {
+                    player.pauseVideo();
+                }
+            }
+
+            function setPlayerVolume(val) {
+                if (player && typeof player.setVolume === 'function') {
+                    player.setVolume(val);
+                }
+            }
+
+            function prevTrack() {
+                if (currentIndex > 0) {
+                    playTrack(currentIndex - 1);
+                } else if (player && typeof player.seekTo === 'function') {
+                    player.seekTo(0);
+                }
+            }
+
+            function nextTrack() {
+                if (currentIndex + 1 < queue.length) {
+                    playTrack(currentIndex + 1);
+                } else {
+                    document.getElementById('nowPlaying').innerText = 'queue finished (add more songs)';
+                    updateAlbumArt(null);
+                    render();
+                }
+            }
+
+            function removeTrack(e, idx) {
+                e.stopPropagation();
+                if (idx < 0 || idx >= queue.length) return;
+
+                const wasCurrent = (idx === currentIndex);
+                queue.splice(idx, 1);
+
+                if (queue.length === 0) {
+                    clearQueue();
+                    return;
+                }
+
+                if (idx < currentIndex) {
+                    currentIndex--;
+                } else if (wasCurrent) {
+                    if (currentIndex >= queue.length) {
+                        currentIndex = queue.length - 1;
+                    }
+                    playTrack(currentIndex);
+                }
+                render();
+            }
+
+            function clearQueue() {
+                queue = [];
+                currentIndex = -1;
+                if (player && typeof player.stopVideo === 'function') {
+                    player.stopVideo();
+                }
+                document.getElementById('nowPlaying').innerText = 'now playing: -';
+                updateAlbumArt(null);
+                render();
+            }
+
+            function render() {
+                const list = document.getElementById('queueList');
+                list.innerHTML = '';
+                if (queue.length === 0) {
+                    const emptyLi = document.createElement('li');
+                    emptyLi.style.color = '#888';
+                    emptyLi.style.cursor = 'default';
+                    emptyLi.innerText = 'queue is empty add a song above';
+                    list.appendChild(emptyLi);
+                    return;
+                }
+
+                queue.forEach((item, i) => {
+                    const li = document.createElement('li');
+                    if (i === currentIndex) {
+                        li.className = 'active';
+                    }
+
+                    const titleSpan = document.createElement('span');
+                    titleSpan.className = 'track-title';
+                    titleSpan.innerText = `${i + 1}. ${item.title || item.id}`;
+
+                    if (i === currentIndex) {
+                        const badge = document.createElement('span');
+                        badge.className = 'badge';
+                        badge.innerText = 'PLAYING';
+                        titleSpan.appendChild(badge);
+                    }
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-btn';
+                    removeBtn.innerHTML = '&times;';
+                    removeBtn.title = 'Remove from queue';
+                    removeBtn.onclick = (e) => removeTrack(e, i);
+                    
+                    li.appendChild(titleSpan);
+                    li.appendChild(removeBtn);
+                    li.onclick = () => playTrack(i);
+
+                    list.appendChild(li);
+                });
+            }
+
+            render();
+        </script>
+    </body>
+</html>
